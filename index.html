@@ -7,16 +7,21 @@
   <!-- React & ReactDOM -->
   <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
-  <!-- Babel -->
+  <!-- Babel (ブラウザ内でJSXを変換するため) -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     /* スクロールバーのカスタマイズ */
-    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: #f1f1f1; }
-    ::-webkit-scrollbar-thumb { background: #c1c1c1; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb { background: #c1c1c1; border-radius: 3px; }
     ::-webkit-scrollbar-thumb:hover { background: #a8a8a8; }
+
+    /* スマホでselectタグ選択時にズームしないように16px以上を強制 */
+    input[type="text"], input[type="number"], select {
+      font-size: 16px !important;
+    }
 
     /* --- グラフ描画用のアニメーション --- */
     @keyframes drawPath { to { stroke-dashoffset: 0; } }
@@ -27,22 +32,17 @@
     .anim-fade { opacity: 0; animation: fadeIn 1s ease-in forwards; }
     @keyframes slideUp { from { opacity: 0; transform: translateY(15px); } to { opacity: 1; transform: translateY(0); } }
     .anim-slide-up { opacity: 0; animation: slideUp 0.5s ease-out forwards; }
-    
-    /* スマホでのselectのデフォルトスタイルを調整 */
-    select {
-      -webkit-appearance: none;
-      -moz-appearance: none;
-      appearance: none;
-    }
   </style>
 </head>
 <body>
   <div id="root"></div>
+
   <script type="text/babel">
     /** @jsx React.createElement */
     /** @jsxFrag React.Fragment */
-    const { useState, useMemo, useEffect } = React;
+    const { useState, useMemo, useEffect, useRef } = React;
 
+    // --- アイコンコンポーネント ---
     const Plus = ({size=24, className=""}) => <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>;
     const Trash2 = ({size=24, className=""}) => <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>;
     const TrendingUp = ({size=24, className=""}) => <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline><polyline points="17 6 23 6 23 12"></polyline></svg>;
@@ -58,52 +58,18 @@
     const Home = ({size=24, className=""}) => <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>;
     const Download = ({size=24, className=""}) => <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>;
     const Upload = ({size=24, className=""}) => <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>;
+    const RefreshCw = ({size=24, className=""}) => <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>;
 
-    const makeOptions = (min, max, step) => {
-      const opts = [];
-      for(let i=min; i<=max; i+=step) {
+    // --- セレクトボックス用オプション生成ヘルパー ---
+    const generateOptions = (start, end, step = 1) => {
+      const options = [];
+      for (let i = start; i <= end; i += step) {
+        // Javascript の浮動小数点誤差を避けるため
         const val = Math.round(i * 10) / 10;
-        opts.push({ value: val, label: val.toLocaleString() });
+        options.push(<option key={val} value={val}>{val}</option>);
       }
-      return opts;
+      return options;
     };
-
-    const ageOpts = makeOptions(0, 100, 1);
-    const retirementAgeOpts = makeOptions(40, 80, 1);
-    const moneyLargeOpts = makeOptions(0, 20000, 100); // 0〜2億円 (100万刻み)
-    const moneyMediumOpts = makeOptions(0, 5000, 10);  // 0〜5000万 (10万刻み)
-    const moneySmallOpts = makeOptions(0, 300, 1);     // 0〜300万 (1万刻み)
-    const eventAmountOpts = makeOptions(0, 10000, 10); // イベント用 (10万刻み)
-    const rateOpts = makeOptions(-5.0, 15.0, 0.5);     // リターン等 (-5.0〜15.0%)
-    const pensionOpts = makeOptions(0, 500, 1);        // 年金額 (1万刻み)
-
-    // カスタムセレクトボックス（スマホ対応：文字サイズ16px相当でズーム回避）
-    const SelectInput = ({ value, onChange, name, options, suffix, className = "" }) => (
-      <div className={`flex items-center bg-white rounded border border-gray-300 w-full overflow-hidden focus-within:ring-2 focus-within:ring-blue-400 ${className}`}>
-        <select 
-          name={name} 
-          value={value} 
-          onChange={onChange} 
-          className="w-full p-2 bg-transparent outline-none cursor-pointer text-right text-[16px] lg:text-sm text-gray-800"
-          style={{ WebkitAppearance: 'none' }}
-        >
-          {options.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-        </select>
-        {suffix && <span className="pr-3 text-[16px] lg:text-sm text-gray-500 whitespace-nowrap pointer-events-none">{suffix}</span>}
-      </div>
-    );
-
-    // シンプルなセレクトボックス（イベントや子供情報用）
-    const SimpleSelect = ({ value, onChange, options, className = "" }) => (
-      <select 
-        value={value} 
-        onChange={onChange} 
-        className={`border border-gray-300 rounded p-1 outline-none cursor-pointer bg-white text-[16px] lg:text-sm ${className}`}
-        style={{ WebkitAppearance: 'none' }}
-      >
-        {options.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-      </select>
-    );
 
     // --- 教育費標準データ (年額・万円) ---
     const educationCosts = {
@@ -114,13 +80,14 @@
       livingAloneSupport: 120 
     };
 
+    // --- 初期設定値（JSONベース） ---
     const defaultBasic = {
       selfAge: 40,
       selfRetirementAge: 65,
-      spouseAge: 37,
+      spouseAge: 40,
       spouseRetirementAge: 65,
       initialCash: 300,
-      initialInvestment: 3000,
+      initialInvestment: 2000,
       monthlyInvestment: 0,
       investmentReturnRate: 2,
       inflationRate: 1,
@@ -128,7 +95,7 @@
     };
 
     const defaultIncome = {
-      selfGrossBefore60: 1060,
+      selfGrossBefore60: 800,
       selfGrowthRateBefore60: 1,
       selfGrossAfter60: 700,
       selfGrowthRateAfter60: 0,
@@ -145,9 +112,9 @@
     };
 
     const defaultChildren = [
-      { id: 1, age: 10, elementary: "public", juniorHigh: "public", highSchool: "private", university: "private_arts", livingAlone: false },
-      { id: 2, age: 8, elementary: "public", juniorHigh: "private", highSchool: "private", university: "private_science", livingAlone: false },
-      { id: 3, age: 2, elementary: "public", juniorHigh: "public", highSchool: "private", university: "private_science", livingAlone: false }
+      { id: 1, age: 8, elementary: "public", juniorHigh: "public", highSchool: "private", university: "private_arts", livingAlone: false },
+      { id: 2, age: 6, elementary: "public", juniorHigh: "private", highSchool: "private", university: "private_science", livingAlone: false },
+      { id: 3, age: 4, elementary: "public", juniorHigh: "public", highSchool: "private", university: "private_science", livingAlone: false }
     ];
 
     const defaultExpense = {
@@ -164,6 +131,7 @@
       { id: 3, age: 50, name: "海外旅行", amount: 500, type: "expense" }
     ];
 
+    // --- 簡易手取り計算ロジック ---
     const calcNetIncome = (grossManYen) => {
       if (!grossManYen || grossManYen <= 0) return 0;
       const gross = grossManYen * 10000;
@@ -179,6 +147,7 @@
     };
 
     function App() {
+      // --- State Management ---
       const [activeTab, setActiveTab] = useState('chart');
 
       // 画面の入力値ステート
@@ -195,49 +164,44 @@
       const [simExpense, setSimExpense] = useState(defaultExpense);
       const [simEvents, setSimEvents] = useState(defaultEvents);
 
+      // その他ステート
       const [simKey, setSimKey] = useState(Date.now());
       const [tooltip, setTooltip] = useState({ show: false, x: 0, y: 0, data: null });
+      const [isLoaded, setIsLoaded] = useState(false);
+      
+      const chartContainerRef = useRef(null);
 
-      // --- Local Storage 自動保存・復元の安全な処理 ---
+      // --- Local Storage 復元（初回マウント時のみ） ---
       useEffect(() => {
-        try {
-          const savedData = localStorage.getItem('life_plan_settings_auto');
-          if (savedData) {
+        const savedData = localStorage.getItem('life_plan_settings_auto');
+        if (savedData) {
+          try {
+            // パースエラーやデータ欠損に備えて、安全にマージする
             const parsed = JSON.parse(savedData);
             
-            // 安全なマージ（欠損プロパティがあってもエラーにならないようにデフォルト値と結合）
-            if (parsed.basic) { 
-              if (parsed.basic.initialSavings !== undefined && parsed.basic.initialCash === undefined) {
-                parsed.basic.initialCash = parsed.basic.initialSavings;
-                parsed.basic.initialInvestment = 0;
-                parsed.basic.investmentReturnRate = 3.0;
-              }
-              const mergedBasic = { ...defaultBasic, ...parsed.basic };
-              setBasic(mergedBasic); setSimBasic(mergedBasic); 
-            }
-            if (parsed.income) { 
-              const mergedIncome = { ...defaultIncome, ...parsed.income };
-              setIncome(mergedIncome); setSimIncome(mergedIncome); 
-            }
-            if (parsed.children) { 
-              setChildren(parsed.children); setSimChildren(parsed.children); 
-            }
-            if (parsed.expense) { 
-              const mergedExpense = { ...defaultExpense, ...parsed.expense };
-              setExpense(mergedExpense); setSimExpense(mergedExpense); 
-            }
-            if (parsed.events) { 
-              setEvents(parsed.events); setSimEvents(parsed.events); 
-            }
+            const mergedBasic = { ...defaultBasic, ...(parsed.basic || {}) };
+            const mergedIncome = { ...defaultIncome, ...(parsed.income || {}) };
+            const mergedExpense = { ...defaultExpense, ...(parsed.expense || {}) };
+            const mergedChildren = parsed.children && Array.isArray(parsed.children) ? parsed.children : defaultChildren;
+            const mergedEvents = parsed.events && Array.isArray(parsed.events) ? parsed.events : defaultEvents;
+
+            setBasic(mergedBasic); setSimBasic(mergedBasic);
+            setIncome(mergedIncome); setSimIncome(mergedIncome);
+            setChildren(mergedChildren); setSimChildren(mergedChildren);
+            setExpense(mergedExpense); setSimExpense(mergedExpense);
+            setEvents(mergedEvents); setSimEvents(mergedEvents);
+            
             setSimKey(Date.now());
+          } catch (e) {
+            console.error("Failed to load settings. Using defaults.", e);
+            // エラー時はlocalStorageをクリアして初期値を使う
+            localStorage.removeItem('life_plan_settings_auto');
           }
-        } catch (e) {
-          console.error("Failed to load settings. Data might be corrupted.", e);
-          // 壊れている場合はクリアして初期値に戻す
-          try { localStorage.removeItem('life_plan_settings_auto'); } catch(e){}
         }
+        setIsLoaded(true);
       }, []);
 
+      // --- Handlers ---
       const handleBasicChange = (e) => setBasic({ ...basic, [e.target.name]: Number(e.target.value) });
       const handleIncomeChange = (e) => setIncome({ ...income, [e.target.name]: Number(e.target.value) });
       const handleExpenseChange = (e) => setExpense({ ...expense, [e.target.name]: Number(e.target.value) });
@@ -248,7 +212,10 @@
         setChildren([...children, { id: newId, age: 0, elementary: 'public', juniorHigh: 'public', highSchool: 'public', university: 'public', livingAlone: false }]);
       };
 
-      const removeChild = (id) => setChildren(children.filter(c => c.id !== id));
+      const removeChild = (id) => {
+        setChildren(children.filter(c => c.id !== id));
+      };
+
       const updateChild = (id, field, value) => {
         setChildren(children.map(c => c.id === id ? { ...c, [field]: field === 'livingAlone' ? value : (field === 'age' ? Number(value) : value) } : c));
       };
@@ -258,13 +225,18 @@
         setEvents([...events, { id: newId, age: basic.selfAge + 5, name: '新規イベント', amount: 100, type: 'expense' }]);
       };
 
-      const removeEvent = (id) => setEvents(events.filter(e => e.id !== id));
+      const removeEvent = (id) => {
+        setEvents(events.filter(e => e.id !== id));
+      };
+
       const updateEvent = (id, field, value) => {
         setEvents(events.map(e => e.id === id ? { ...e, [field]: field === 'name' || field === 'type' ? value : Number(value) } : e));
       };
 
-      // ツールチップ用ハンドラー（スマホのタッチイベントにも対応）
+      // ツールチップのハンドラー（スクロール追従防止のため相対座標で計算）
       const handlePointerMove = (e, data) => {
+        if (!chartContainerRef.current) return;
+        
         let clientX, clientY;
         if (e.touches && e.touches.length > 0) {
           clientX = e.touches[0].clientX;
@@ -274,19 +246,24 @@
           clientY = e.clientY;
         }
         
-        let xPos = clientX;
-        const screenWidth = window.innerWidth;
-        if (screenWidth - xPos < 150) {
+        const rect = chartContainerRef.current.getBoundingClientRect();
+        let xPos = clientX - rect.left;
+        let yPos = clientY - rect.top;
+
+        const containerWidth = rect.width;
+        if (containerWidth - xPos < 150) {
           xPos -= 80;
         } else if (xPos < 150) {
           xPos += 80;
         }
-        setTooltip({ show: true, x: xPos, y: clientY, data: data });
+        setTooltip({ show: true, x: xPos, y: yPos, data: data });
       };
 
-      const handleMouseLeave = () => setTooltip(prev => ({ ...prev, show: false }));
+      const handleMouseLeave = () => {
+        setTooltip(prev => ({ ...prev, show: false }));
+      };
 
-      // シミュレーション実行・保存処理
+      // シミュレーション実行処理
       const runSimulation = () => {
         setSimBasic(basic);
         setSimIncome(income);
@@ -295,14 +272,17 @@
         setSimEvents(events);
         setSimKey(Date.now());
 
-        try {
-          const settings = { basic, income, children, expense, events };
-          localStorage.setItem('life_plan_settings_auto', JSON.stringify(settings));
-        } catch (e) {
-          console.error("Failed to save settings to localStorage.", e);
+        // シミュレーション実行時にのみLocalStorageに保存
+        const settings = { basic, income, children, expense, events };
+        localStorage.setItem('life_plan_settings_auto', JSON.stringify(settings));
+        
+        // スマホの場合、結果エリアにスクロール
+        if (window.innerWidth < 1024 && chartContainerRef.current) {
+          chartContainerRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
       };
 
+      // 設定のエクスポート処理
       const exportSettings = () => {
         const settings = { basic, income, children, expense, events };
         const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(settings, null, 2));
@@ -314,6 +294,7 @@
         downloadAnchorNode.remove();
       };
 
+      // 設定のインポート処理
       const importSettings = (e) => {
         const file = e.target.files[0];
         if (!file) return;
@@ -322,28 +303,28 @@
         reader.onload = (event) => {
           try {
             const parsed = JSON.parse(event.target.result);
-            if (parsed.basic) { 
-              if (parsed.basic.initialSavings !== undefined && parsed.basic.initialCash === undefined) {
-                parsed.basic.initialCash = parsed.basic.initialSavings;
-                parsed.basic.initialInvestment = 0;
-                parsed.basic.investmentReturnRate = 3.0;
-              }
-              parsed.basic.monthlyInvestment = parsed.basic.monthlyInvestment || 0;
-              const mergedBasic = { ...defaultBasic, ...parsed.basic };
-              setBasic(mergedBasic); setSimBasic(mergedBasic); 
+            
+            const mergedBasic = { ...defaultBasic, ...(parsed.basic || {}) };
+            const mergedIncome = { ...defaultIncome, ...(parsed.income || {}) };
+            const mergedExpense = { ...defaultExpense, ...(parsed.expense || {}) };
+            const mergedChildren = parsed.children && Array.isArray(parsed.children) ? parsed.children : defaultChildren;
+            const mergedEvents = parsed.events && Array.isArray(parsed.events) ? parsed.events : defaultEvents;
+
+            // 過去バージョン互換性対応
+            if (mergedBasic.initialSavings !== undefined && mergedBasic.initialCash === undefined) {
+              mergedBasic.initialCash = mergedBasic.initialSavings;
+              mergedBasic.initialInvestment = 0;
+              mergedBasic.investmentReturnRate = 3.0;
             }
-            if (parsed.income) { 
-              parsed.income.pensionStartSelf = parsed.income.pensionStartSelf || 65;
-              parsed.income.pensionStartSpouse = parsed.income.pensionStartSpouse || 65;
-              const mergedIncome = { ...defaultIncome, ...parsed.income };
-              setIncome(mergedIncome); setSimIncome(mergedIncome); 
-            }
-            if (parsed.children) { setChildren(parsed.children); setSimChildren(parsed.children); }
-            if (parsed.expense) { 
-              const mergedExpense = { ...defaultExpense, ...parsed.expense };
-              setExpense(mergedExpense); setSimExpense(mergedExpense); 
-            }
-            if (parsed.events) { setEvents(parsed.events); setSimEvents(parsed.events); }
+            
+            setBasic(mergedBasic); setSimBasic(mergedBasic);
+            setIncome(mergedIncome); setSimIncome(mergedIncome);
+            setChildren(mergedChildren); setSimChildren(mergedChildren);
+            setExpense(mergedExpense); setSimExpense(mergedExpense);
+            setEvents(mergedEvents); setSimEvents(mergedEvents);
+            
+            // インポートしたら保存
+            localStorage.setItem('life_plan_settings_auto', JSON.stringify({ basic: mergedBasic, income: mergedIncome, children: mergedChildren, expense: mergedExpense, events: mergedEvents }));
             
             setSimKey(Date.now());
           } catch (error) {
@@ -355,22 +336,24 @@
         e.target.value = ''; 
       };
 
+      // 設定のリセット（ベースの初期値に戻す）
       const resetSettings = () => {
-        if (window.confirm("入力した内容をリセットし、最初の初期値に戻しますか？")) {
+        if (window.confirm("入力した内容をリセットし、初期値に戻しますか？")) {
           setBasic(defaultBasic); setSimBasic(defaultBasic);
           setIncome(defaultIncome); setSimIncome(defaultIncome);
           setChildren(defaultChildren); setSimChildren(defaultChildren);
           setExpense(defaultExpense); setSimExpense(defaultExpense);
           setEvents(defaultEvents); setSimEvents(defaultEvents);
-          try { localStorage.removeItem('life_plan_settings_auto'); } catch(e){}
+          localStorage.removeItem('life_plan_settings_auto');
           setSimKey(Date.now());
         }
       };
 
+      // --- Simulation Logic ---
       const simulationData = useMemo(() => {
         let data = [];
-        let currentCash = simBasic.initialCash || 0;
-        let currentInvestment = simBasic.initialInvestment || 0;
+        let currentCash = simBasic.initialCash;
+        let currentInvestment = simBasic.initialInvestment;
         let isBankrupt = false;
         let bankruptAge = null;
 
@@ -383,6 +366,7 @@
           const yearsPassed = age - simBasic.selfAge;
           const currentSpouseAge = simBasic.spouseAge + yearsPassed;
 
+          // 本人収入の計算
           if (age < 60 && age < simBasic.selfRetirementAge) {
             selfGross = simIncome.selfGrossBefore60 * Math.pow(1 + simIncome.selfGrowthRateBefore60 / 100, yearsPassed);
           } else if (age >= 60 && age < simBasic.selfRetirementAge) {
@@ -396,6 +380,7 @@
             pension += simIncome.pensionSelf;
           }
 
+          // 配偶者収入の計算
           if (currentSpouseAge < 60 && currentSpouseAge < simBasic.spouseRetirementAge) {
             spouseGross = simIncome.spouseGrossBefore60 * Math.pow(1 + simIncome.spouseGrowthRateBefore60 / 100, yearsPassed);
           } else if (currentSpouseAge >= 60 && currentSpouseAge < simBasic.spouseRetirementAge) {
@@ -413,9 +398,11 @@
           const spouseNet = calcNetIncome(spouseGross);
           const totalIncome = selfNet + spouseNet + pension + severance;
 
+          // 基本生活費（インフレ加味）
           const monthlyExpense = age < simBasic.selfRetirementAge ? simExpense.baseMonthly : simExpense.retirementMonthly;
           let baseYearlyExpense = (monthlyExpense * 12) * Math.pow(1 + simBasic.inflationRate / 100, yearsPassed);
           
+          // 教育費の計算
           let educationExpense = 0;
           simChildren.forEach(child => {
             const childAge = child.age + yearsPassed;
@@ -436,11 +423,13 @@
           });
           let infEducationExpense = educationExpense * Math.pow(1 + simBasic.inflationRate / 100, yearsPassed);
 
+          // 住居費の計算
           const housingLoanYearly = age <= simExpense.housingLoanEndAge ? simExpense.housingLoanMonthly * 12 : 0;
           const housingMaintenanceYearly = simExpense.housingMaintenanceMonthly * 12;
           const infHousingMaintenance = housingMaintenanceYearly * Math.pow(1 + simBasic.inflationRate / 100, yearsPassed);
           const totalHousingExpense = housingLoanYearly + infHousingMaintenance;
 
+          // --- 自動発生イベントの判定 ---
           let autoEvents = [];
           if (age === simIncome.pensionStartSelf && simIncome.pensionSelf > 0) {
             autoEvents.push('本人年金受給開始');
@@ -455,6 +444,7 @@
             }
           });
 
+          // --- 手動イベント支出の計算 ---
           let eventExpense = 0;
           let eventIncome = 0;
           const currentYearEvents = simEvents.filter(e => e.age === age);
@@ -515,13 +505,14 @@
         return { data, bankruptAge };
       }, [simBasic, simIncome, simChildren, simExpense, simEvents]);
 
+      // --- SVG Chart Helpers ---
       const chartData = simulationData.data;
       const maxSavings = Math.max(...chartData.map(d => d.savings), 1000);
       const minSavings = Math.min(...chartData.map(d => d.savings), 0);
       const maxFlow = Math.max(...chartData.map(d => Math.max(d.totalIncome, d.totalExpense)), 100);
       
-      const chartWidth = 800;
-      const chartHeight = 350;
+      const chartWidth = window.innerWidth < 768 ? window.innerWidth - 30 : 800; // スマホ用サイズ調整
+      const chartHeight = window.innerWidth < 768 ? 300 : 350;
       const padding = { top: 40, right: 60, bottom: 30, left: 60 };
       const innerWidth = chartWidth - padding.left - padding.right;
       const innerHeight = chartHeight - padding.top - padding.bottom;
@@ -537,7 +528,7 @@
       const zeroY = getY(0);
 
       const xTicks = [];
-      for (let a = simBasic.selfAge; a <= simBasic.endAge; a += 5) {
+      for (let a = simBasic.selfAge; a <= simBasic.endAge; a += window.innerWidth < 768 ? 10 : 5) {
         xTicks.push(a);
       }
 
@@ -558,107 +549,621 @@
         flowTicks.push(v);
       }
 
+      if (!isLoaded) return <div className="min-h-screen flex items-center justify-center bg-gray-50 text-gray-500">Loading...</div>;
+
       return (
-        // main 全体を縦並び（スマホ） / 横並び（PC） に対応。スマホ時は全体スクロール
-        <div className="min-h-screen bg-gray-50 flex flex-col font-sans text-gray-800 lg:overflow-hidden">
-          <header className="bg-blue-900 text-white p-3 lg:p-4 shadow-md flex items-center justify-between z-20 shrink-0">
-            <div className="flex items-center gap-2">
-              <Activity size={24} className="text-blue-300" />
-              <h1 className="text-lg lg:text-xl font-bold tracking-wider">ライフプランシミュレータ <span className="text-xs lg:text-sm font-normal text-blue-200 ml-1 lg:ml-2">PRO</span></h1>
+        <div className="min-h-screen bg-gray-50 flex flex-col font-sans text-gray-800">
+          <header className="bg-blue-900 text-white p-3 lg:p-4 shadow-md flex items-center justify-between z-10 sticky top-0">
+            <div className="flex items-center gap-1 lg:gap-2">
+              <Activity size={20} className="text-blue-300 lg:w-6 lg:h-6" />
+              <h1 className="text-base lg:text-xl font-bold tracking-wider">ライフプランシミュレータ <span className="text-[10px] lg:text-sm font-normal text-blue-200 ml-1">PRO</span></h1>
             </div>
-            <div className="text-xs lg:text-sm text-blue-200 flex items-center gap-1">
-              <Info size={16} /> <span className="hidden sm:inline">手取り額は簡易税率を用いて自動計算されます</span>
+            <div className="text-[10px] lg:text-sm text-blue-200 flex items-center gap-1">
+              <Info size={14} /> 手取りは自動計算
             </div>
           </header>
 
-          <main className="flex-1 flex flex-col lg:flex-row overflow-y-auto lg:overflow-hidden relative">
+          {/* スマホレイアウト（lg:未満）では縦並び（flex-col）、PC（lg:）では横並び（flex-row） */}
+          <main className="flex-1 flex flex-col lg:flex-row overflow-hidden relative">
             
-            {/* 結果セクション：スマホ時は上（order-1）、PC時は右（order-2）に配置 */}
-            <section className="w-full lg:w-2/3 bg-white flex flex-col relative order-1 lg:order-2 lg:overflow-hidden border-b-4 lg:border-b-0 lg:border-l border-gray-200 shadow-md lg:shadow-none z-10 shrink-0 lg:shrink">
-              <div className="bg-gradient-to-r from-gray-800 to-gray-900 text-white p-4 lg:p-6 shadow-md z-10 flex justify-between items-center shrink-0">
-                <div>
+            {/* --- Left Panel: Inputs --- */}
+            <aside className="w-full lg:w-1/3 bg-white lg:border-r border-b lg:border-b-0 border-gray-200 overflow-y-auto p-4 lg:p-6 shadow-inner z-10 order-2 lg:order-1 h-auto lg:h-full">
+              
+              <div className="mb-6 lg:mb-8 space-y-3 sticky top-0 bg-white/95 backdrop-blur py-2 z-20 border-b border-gray-100">
+                <button
+                  onClick={runSimulation}
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 lg:py-4 px-4 rounded-xl shadow-lg flex justify-center items-center gap-2 transition-all active:scale-95 group text-lg"
+                >
+                  <Play size={24} className="group-hover:scale-110 transition-transform" />
+                  シミュレーション実行
+                </button>
+                <div className="flex gap-2">
+                  <button onClick={exportSettings} className="flex-1 bg-gray-50 hover:bg-gray-100 text-gray-700 text-xs font-semibold py-2 px-1 rounded-lg border border-gray-200 flex justify-center items-center gap-1 transition-colors">
+                    <Download size={14} /> 保存
+                  </button>
+                  <label className="flex-1 bg-gray-50 hover:bg-gray-100 text-gray-700 text-xs font-semibold py-2 px-1 rounded-lg border border-gray-200 flex justify-center items-center gap-1 transition-colors cursor-pointer">
+                    <Upload size={14} /> 読込
+                    <input type="file" accept=".json" className="hidden" onChange={importSettings} />
+                  </label>
+                  <button onClick={resetSettings} className="flex-1 bg-gray-50 hover:bg-red-50 text-red-600 text-xs font-semibold py-2 px-1 rounded-lg border border-gray-200 flex justify-center items-center gap-1 transition-colors">
+                    <RefreshCw size={14} /> 初期化
+                  </button>
+                </div>
+              </div>
+
+              {/* Section: 基本情報 */}
+              <div className="mb-8">
+                <h2 className="text-lg font-semibold border-b-2 border-blue-500 pb-2 mb-4 flex items-center gap-2">
+                  <User size={20} className="text-blue-600"/> 家族・基本情報
+                </h2>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs text-gray-600 mb-1">本人 現在の年齢</label>
+                    <div className="flex items-center">
+                      <select name="selfAge" value={basic.selfAge} onChange={handleBasicChange} className="w-full border border-gray-300 rounded p-2 text-right focus:ring-2 focus:ring-blue-400 outline-none bg-white">
+                        {generateOptions(18, 80)}
+                      </select>
+                      <span className="ml-2 text-sm">歳</span>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-600 mb-1">本人 退職予定年齢</label>
+                    <div className="flex items-center">
+                      <select name="selfRetirementAge" value={basic.selfRetirementAge} onChange={handleBasicChange} className="w-full border border-gray-300 rounded p-2 text-right focus:ring-2 focus:ring-blue-400 outline-none bg-white">
+                        {generateOptions(50, 80)}
+                      </select>
+                      <span className="ml-2 text-sm">歳</span>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-600 mb-1">配偶者 現在の年齢</label>
+                    <div className="flex items-center">
+                      <select name="spouseAge" value={basic.spouseAge} onChange={handleBasicChange} className="w-full border border-gray-300 rounded p-2 text-right focus:ring-2 focus:ring-blue-400 outline-none bg-white">
+                        {generateOptions(18, 80)}
+                      </select>
+                      <span className="ml-2 text-sm">歳</span>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-600 mb-1">配偶者 退職予定年齢</label>
+                    <div className="flex items-center">
+                      <select name="spouseRetirementAge" value={basic.spouseRetirementAge} onChange={handleBasicChange} className="w-full border border-gray-300 rounded p-2 text-right focus:ring-2 focus:ring-blue-400 outline-none bg-white">
+                        {generateOptions(50, 80)}
+                      </select>
+                      <span className="ml-2 text-sm">歳</span>
+                    </div>
+                  </div>
+                  
+                  <div className="col-span-2 mt-2 grid grid-cols-2 gap-4 border-t border-gray-100 pt-3">
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">現在の金融資産 (現金)</label>
+                      <div className="flex items-center">
+                        <select name="initialCash" value={basic.initialCash} onChange={handleBasicChange} className="w-full border border-gray-300 rounded p-2 text-right focus:ring-2 focus:ring-blue-400 outline-none text-base font-bold text-blue-700 bg-white">
+                          {generateOptions(0, 10000, 50)}
+                        </select>
+                        <span className="ml-1 text-xs whitespace-nowrap">万円</span>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">現在の金融資産 (投資商品)</label>
+                      <div className="flex items-center">
+                        <select name="initialInvestment" value={basic.initialInvestment} onChange={handleBasicChange} className="w-full border border-gray-300 rounded p-2 text-right focus:ring-2 focus:ring-blue-400 outline-none text-base font-bold text-green-700 bg-white">
+                          {generateOptions(0, 20000, 100)}
+                        </select>
+                        <span className="ml-1 text-xs whitespace-nowrap">万円</span>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="col-span-2 grid grid-cols-3 gap-2 mt-1">
+                    <div>
+                      <label className="block text-[10px] text-gray-600 mb-1 font-bold text-green-600">毎月の投資積立</label>
+                      <div className="flex items-center bg-green-50 rounded border border-green-300 p-1">
+                        <select name="monthlyInvestment" value={basic.monthlyInvestment} onChange={handleBasicChange} className="w-full bg-transparent border-none text-right focus:outline-none text-sm font-bold">
+                          {generateOptions(0, 50, 1)}
+                        </select>
+                        <span className="text-[10px] text-gray-600 whitespace-nowrap ml-1">万円</span>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] text-gray-600 mb-1">期待リターン</label>
+                      <div className="flex items-center bg-white rounded border border-gray-300 p-1">
+                        <select name="investmentReturnRate" value={basic.investmentReturnRate} onChange={handleBasicChange} className="w-full border-none bg-transparent text-right focus:outline-none text-sm">
+                          {generateOptions(0, 10, 0.5)}
+                        </select>
+                        <span className="text-[10px] text-gray-500 whitespace-nowrap ml-1">%</span>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] text-gray-600 mb-1">予想インフレ率</label>
+                      <div className="flex items-center bg-white rounded border border-gray-300 p-1">
+                        <select name="inflationRate" value={basic.inflationRate} onChange={handleBasicChange} className="w-full border-none bg-transparent text-right focus:outline-none text-sm">
+                          {generateOptions(-2, 5, 0.5)}
+                        </select>
+                        <span className="text-[10px] text-gray-500 whitespace-nowrap ml-1">%</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mb-8 bg-blue-50 p-4 rounded-xl border border-blue-100">
+                <h2 className="text-lg font-semibold text-blue-800 mb-2 flex items-center gap-2">
+                  <TrendingUp size={20} /> 収入・年金設定
+                </h2>
+                <p className="text-[10px] text-gray-600 mb-3 bg-white p-2 rounded border border-blue-200 shadow-sm leading-tight">
+                  ※年収は<span className="font-bold text-red-500">額面金額</span>を選択してください。社会保険料等を差し引いた<span className="font-bold text-blue-600">標準的な手取り額</span>に自動計算して反映します。
+                </p>
+                <div className="space-y-4">
+                  
+                  <div className="bg-white p-3 rounded-lg border border-blue-200 shadow-sm">
+                    <h3 className="text-sm font-bold text-blue-700 mb-2 border-b border-blue-100 pb-1">本人</h3>
+                    <div className="grid grid-cols-2 gap-3 mb-3">
+                      <div>
+                        <label className="block text-[10px] text-gray-500">額面年収(〜60歳)</label>
+                        <div className="flex items-center border rounded p-1">
+                          <select name="selfGrossBefore60" value={income.selfGrossBefore60} onChange={handleIncomeChange} className="w-full border-none bg-transparent text-right text-sm">
+                            {generateOptions(0, 3000, 50)}
+                          </select>
+                          <span className="ml-1 text-[10px] text-gray-500 whitespace-nowrap">万円</span>
+                        </div>
+                        <p className="text-[9px] text-blue-600 mt-0.5 text-right font-medium">手取り約: {Math.round(calcNetIncome(income.selfGrossBefore60))}万円</p>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-gray-500">上昇率(年率)</label>
+                        <div className="flex items-center border rounded p-1">
+                          <select name="selfGrowthRateBefore60" value={income.selfGrowthRateBefore60} onChange={handleIncomeChange} className="w-full border-none bg-transparent text-right text-sm">
+                            {generateOptions(-5, 10, 0.5)}
+                          </select>
+                          <span className="ml-1 text-[10px] text-gray-500 whitespace-nowrap">%</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3 mb-3">
+                      <div>
+                        <label className="block text-[10px] text-gray-500">額面年収(60歳〜)</label>
+                        <div className="flex items-center border rounded p-1">
+                          <select name="selfGrossAfter60" value={income.selfGrossAfter60} onChange={handleIncomeChange} className="w-full border-none bg-transparent text-right text-sm">
+                            {generateOptions(0, 3000, 50)}
+                          </select>
+                          <span className="ml-1 text-[10px] text-gray-500 whitespace-nowrap">万円</span>
+                        </div>
+                        <p className="text-[9px] text-blue-600 mt-0.5 text-right font-medium">手取り約: {Math.round(calcNetIncome(income.selfGrossAfter60))}万円</p>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-gray-500">上昇率(年率)</label>
+                        <div className="flex items-center border rounded p-1">
+                          <select name="selfGrowthRateAfter60" value={income.selfGrowthRateAfter60} onChange={handleIncomeChange} className="w-full border-none bg-transparent text-right text-sm">
+                            {generateOptions(-5, 10, 0.5)}
+                          </select>
+                          <span className="ml-1 text-[10px] text-gray-500 whitespace-nowrap">%</span>
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <div className="grid grid-cols-3 gap-2">
+                      <div>
+                        <label className="block text-[10px] text-gray-500">退職金</label>
+                        <div className="flex items-center border rounded p-1">
+                          <select name="severanceSelf" value={income.severanceSelf} onChange={handleIncomeChange} className="w-full border-none bg-transparent text-right text-sm">
+                            {generateOptions(0, 5000, 100)}
+                          </select>
+                          <span className="text-[10px] text-gray-500">万</span>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-gray-500">年金開始年齢</label>
+                        <div className="flex items-center border rounded p-1">
+                          <select name="pensionStartSelf" value={income.pensionStartSelf} onChange={handleIncomeChange} className="w-full border-none bg-transparent text-right text-sm">
+                            {generateOptions(60, 75)}
+                          </select>
+                          <span className="text-[10px] text-gray-500">歳</span>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-gray-500">年金(年額)</label>
+                        <div className="flex items-center border rounded p-1">
+                          <select name="pensionSelf" value={income.pensionSelf} onChange={handleIncomeChange} className="w-full border-none bg-transparent text-right text-sm font-bold text-blue-700">
+                            {generateOptions(0, 400, 10)}
+                          </select>
+                          <span className="text-[10px] text-gray-500">万</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-white p-3 rounded-lg border border-blue-200 shadow-sm">
+                    <h3 className="text-sm font-bold text-blue-700 mb-2 border-b border-blue-100 pb-1">配偶者</h3>
+                    <div className="grid grid-cols-2 gap-3 mb-3">
+                      <div>
+                        <label className="block text-[10px] text-gray-500">額面年収(〜60歳)</label>
+                        <div className="flex items-center border rounded p-1">
+                          <select name="spouseGrossBefore60" value={income.spouseGrossBefore60} onChange={handleIncomeChange} className="w-full border-none bg-transparent text-right text-sm">
+                            {generateOptions(0, 3000, 50)}
+                          </select>
+                          <span className="ml-1 text-[10px] text-gray-500 whitespace-nowrap">万円</span>
+                        </div>
+                        <p className="text-[9px] text-blue-600 mt-0.5 text-right font-medium">手取り約: {Math.round(calcNetIncome(income.spouseGrossBefore60))}万円</p>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-gray-500">上昇率(年率)</label>
+                        <div className="flex items-center border rounded p-1">
+                          <select name="spouseGrowthRateBefore60" value={income.spouseGrowthRateBefore60} onChange={handleIncomeChange} className="w-full border-none bg-transparent text-right text-sm">
+                            {generateOptions(-5, 10, 0.5)}
+                          </select>
+                          <span className="ml-1 text-[10px] text-gray-500 whitespace-nowrap">%</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3 mb-3">
+                      <div>
+                        <label className="block text-[10px] text-gray-500">額面年収(60歳〜)</label>
+                        <div className="flex items-center border rounded p-1">
+                          <select name="spouseGrossAfter60" value={income.spouseGrossAfter60} onChange={handleIncomeChange} className="w-full border-none bg-transparent text-right text-sm">
+                            {generateOptions(0, 3000, 50)}
+                          </select>
+                          <span className="ml-1 text-[10px] text-gray-500 whitespace-nowrap">万円</span>
+                        </div>
+                        <p className="text-[9px] text-blue-600 mt-0.5 text-right font-medium">手取り約: {Math.round(calcNetIncome(income.spouseGrossAfter60))}万円</p>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-gray-500">上昇率(年率)</label>
+                        <div className="flex items-center border rounded p-1">
+                          <select name="spouseGrowthRateAfter60" value={income.spouseGrowthRateAfter60} onChange={handleIncomeChange} className="w-full border-none bg-transparent text-right text-sm">
+                            {generateOptions(-5, 10, 0.5)}
+                          </select>
+                          <span className="ml-1 text-[10px] text-gray-500 whitespace-nowrap">%</span>
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <div className="grid grid-cols-3 gap-2">
+                      <div>
+                        <label className="block text-[10px] text-gray-500">退職金</label>
+                        <div className="flex items-center border rounded p-1">
+                          <select name="severanceSpouse" value={income.severanceSpouse} onChange={handleIncomeChange} className="w-full border-none bg-transparent text-right text-sm">
+                            {generateOptions(0, 5000, 100)}
+                          </select>
+                          <span className="text-[10px] text-gray-500">万</span>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-gray-500">年金開始年齢</label>
+                        <div className="flex items-center border rounded p-1">
+                          <select name="pensionStartSpouse" value={income.pensionStartSpouse} onChange={handleIncomeChange} className="w-full border-none bg-transparent text-right text-sm">
+                            {generateOptions(60, 75)}
+                          </select>
+                          <span className="text-[10px] text-gray-500">歳</span>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-gray-500">年金(年額)</label>
+                        <div className="flex items-center border rounded p-1">
+                          <select name="pensionSpouse" value={income.pensionSpouse} onChange={handleIncomeChange} className="w-full border-none bg-transparent text-right text-sm font-bold text-blue-700">
+                            {generateOptions(0, 400, 10)}
+                          </select>
+                          <span className="text-[10px] text-gray-500">万</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                </div>
+              </div>
+
+              <div className="mb-8">
+                <div className="flex items-center justify-between border-b-2 border-green-500 pb-2 mb-4">
+                  <h2 className="text-lg font-semibold flex items-center gap-2">
+                    <GraduationCap size={20} className="text-green-600"/> 子ども・教育情報
+                  </h2>
+                  <button onClick={addChild} disabled={children.length >= 3} className="text-sm bg-green-100 text-green-700 px-3 py-1 rounded hover:bg-green-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center transition-colors">
+                    <Plus size={16} className="mr-1"/> 追加
+                  </button>
+                </div>
+                
+                <p className="text-[10px] lg:text-xs text-gray-500 mb-3 ml-1 leading-tight">※小・中・高の金額は、平均的な塾・習い事の費用を加味しています。</p>
+
+                <div className="space-y-3">
+                  {children.map((child, index) => (
+                    <div key={child.id} className="bg-white border border-gray-200 p-3 rounded-xl shadow-sm flex flex-col gap-2 relative group">
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="text-sm font-bold text-green-700">第{index + 1}子</span>
+                        <button onClick={() => removeChild(child.id)} className="text-gray-400 hover:text-red-500">
+                          <Trash2 size={18} />
+                        </button>
+                      </div>
+                      
+                      <div className="flex items-center gap-2 mb-2 bg-gray-50 p-2 rounded-lg border border-gray-100 w-fit">
+                        <span className="text-xs text-gray-600 font-bold">現在の年齢</span>
+                        <select value={child.age} onChange={(e) => updateChild(child.id, 'age', e.target.value)} className="border border-gray-300 rounded p-1 text-center text-sm font-bold text-green-700 bg-white">
+                          {generateOptions(0, 22)}
+                        </select>
+                        <span className="text-xs text-gray-500">歳</span>
+                      </div>
+                      
+                      <div className="grid grid-cols-2 gap-2 text-[10px] lg:text-xs">
+                        <div>
+                          <label className="block text-gray-500 mb-1">小学校</label>
+                          <select value={child.elementary} onChange={(e) => updateChild(child.id, 'elementary', e.target.value)} className="w-full border border-gray-300 rounded p-1.5 bg-white">
+                            <option value="public">公立 (約40万/年)</option>
+                            <option value="private">私立 (約170万/年)</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-gray-500 mb-1">中学校</label>
+                          <select value={child.juniorHigh} onChange={(e) => updateChild(child.id, 'juniorHigh', e.target.value)} className="w-full border border-gray-300 rounded p-1.5 bg-white">
+                            <option value="public">公立 (約60万/年)</option>
+                            <option value="private">私立 (約150万/年)</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-gray-500 mb-1">高校</label>
+                          <select value={child.highSchool} onChange={(e) => updateChild(child.id, 'highSchool', e.target.value)} className="w-full border border-gray-300 rounded p-1.5 bg-white">
+                            <option value="public">公立 (約60万/年)</option>
+                            <option value="private">私立 (約110万/年)</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-gray-500 mb-1">大学・大学院</label>
+                          <select value={child.university} onChange={(e) => updateChild(child.id, 'university', e.target.value)} className="w-full border border-gray-300 rounded p-1.5 bg-white text-blue-700 font-semibold">
+                            <option value="public">国公立 (約65万/年)</option>
+                            <option value="private_arts">私立文系 (約110万/年)</option>
+                            <option value="private_science">私立理系 (約150万/年)</option>
+                            <option value="none">進学しない</option>
+                          </select>
+                        </div>
+                      </div>
+                      
+                      <div className="mt-2 pt-2 border-t border-gray-100 flex items-center">
+                        <label className="flex items-center gap-2 text-xs cursor-pointer text-gray-700 font-medium">
+                          <input type="checkbox" checked={child.livingAlone} onChange={(e) => updateChild(child.id, 'livingAlone', e.target.checked)} className="rounded w-4 h-4 text-green-600 focus:ring-green-500" />
+                          大学進学時に一人暮らし（仕送り約120万/年）
+                        </label>
+                      </div>
+                    </div>
+                  ))}
+                  {children.length === 0 && (
+                    <p className="text-sm text-gray-400 text-center py-4 bg-gray-50 rounded-lg border border-gray-100">登録されていません</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="mb-8">
+                <h2 className="text-lg font-semibold border-b-2 border-red-400 pb-2 mb-4 flex items-center gap-2">
+                  <DollarSign size={20} className="text-red-500"/> 支出設定
+                </h2>
+                
+                <div className="bg-white p-3 lg:p-4 rounded-xl border border-red-200 mb-4 shadow-sm">
+                  <h3 className="text-sm font-bold text-red-700 mb-2 border-b border-red-100 pb-1">基本生活費 <span className="text-[10px] text-gray-500 font-normal block lg:inline mt-1 lg:mt-0">※教育費・住居費を除く現在の価値（インフレ対象）</span></h3>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-[10px] lg:text-xs text-gray-600 mb-1">現役時代（月額）</label>
+                      <div className="flex items-center border rounded p-1 border-gray-300">
+                        <select name="baseMonthly" value={expense.baseMonthly} onChange={handleExpenseChange} className="w-full border-none bg-transparent text-right text-sm font-bold text-red-700 focus:outline-none">
+                          {generateOptions(10, 100, 1)}
+                        </select>
+                        <span className="ml-1 text-[10px] whitespace-nowrap">万円</span>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] lg:text-xs text-gray-600 mb-1">老後（月額）</label>
+                      <div className="flex items-center border rounded p-1 border-gray-300">
+                        <select name="retirementMonthly" value={expense.retirementMonthly} onChange={handleExpenseChange} className="w-full border-none bg-transparent text-right text-sm font-bold text-red-700 focus:outline-none">
+                          {generateOptions(10, 100, 1)}
+                        </select>
+                        <span className="ml-1 text-[10px] whitespace-nowrap">万円</span>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="mt-3 p-2 bg-red-50 rounded text-[10px] text-gray-600 space-y-1">
+                    <p className="font-semibold text-red-700 border-b border-red-200 pb-1 mb-1">【老後の生活費の目安】</p>
+                    <p className="flex items-start"><span className="text-red-400 mr-1">●</span>ゆとりある生活（旅行・趣味充実）: 約36万円/月</p>
+                    <p className="flex items-start"><span className="text-red-400 mr-1">●</span>標準的な生活（たまに楽しむ）: 約24万円/月</p>
+                    <p className="flex items-start"><span className="text-red-400 mr-1">●</span>倹約した生活（収入の範囲内）: 約22万円/月</p>
+                  </div>
+                </div>
+
+                <div className="bg-white p-3 lg:p-4 rounded-xl border border-red-200 shadow-sm">
+                  <h3 className="text-sm font-bold text-red-700 mb-2 border-b border-red-100 pb-1 flex items-center gap-1">
+                    <Home size={16} /> 住宅関連費
+                  </h3>
+                  <div className="grid grid-cols-2 gap-4 mb-3">
+                    <div>
+                      <label className="block text-[10px] lg:text-xs text-gray-600 mb-1">ローン・家賃等（月額）</label>
+                      <div className="flex items-center border border-gray-300 rounded p-1">
+                        <select name="housingLoanMonthly" value={expense.housingLoanMonthly} onChange={handleExpenseChange} className="w-full border-none bg-transparent text-right text-sm focus:outline-none">
+                          {generateOptions(0, 50, 1)}
+                        </select>
+                        <span className="ml-1 text-[10px] whitespace-nowrap">万円</span>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] lg:text-xs text-gray-600 mb-1">支払い完了年齢(本人)</label>
+                      <div className="flex items-center border border-gray-300 rounded p-1">
+                        <select name="housingLoanEndAge" value={expense.housingLoanEndAge} onChange={handleExpenseChange} className="w-full border-none bg-transparent text-right text-sm focus:outline-none">
+                          {generateOptions(40, 100, 1)}
+                        </select>
+                        <span className="ml-1 text-[10px] whitespace-nowrap">歳</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="w-full lg:w-1/2 pr-0 lg:pr-2">
+                    <label className="block text-[10px] lg:text-xs text-gray-600 mb-1">管理費・修繕費等（月額）</label>
+                    <div className="flex items-center border border-gray-300 rounded p-1">
+                      <select name="housingMaintenanceMonthly" value={expense.housingMaintenanceMonthly} onChange={handleExpenseChange} className="w-full border-none bg-transparent text-right text-sm focus:outline-none">
+                        {generateOptions(0, 20, 1)}
+                      </select>
+                      <span className="ml-1 text-[10px] whitespace-nowrap">万円</span>
+                    </div>
+                    <p className="text-[10px] text-gray-500 mt-1 text-right">※インフレ対象(一生涯)</p>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between border-b-2 border-orange-400 pb-2 mb-4">
+                  <h2 className="text-lg font-semibold flex items-center gap-2">
+                    <Calendar size={20} className="text-orange-500"/> ライフイベント
+                  </h2>
+                  <button onClick={addEvent} className="text-sm bg-orange-100 text-orange-700 px-3 py-1 rounded hover:bg-orange-200 flex items-center transition-colors font-bold shadow-sm">
+                    <Plus size={16} className="mr-1"/> 追加
+                  </button>
+                </div>
+                
+                <div className="space-y-3">
+                  {events.map((ev, index) => (
+                    <div key={ev.id} className="bg-white border border-gray-200 p-3 rounded-xl shadow-sm flex flex-col gap-2 relative group hover:border-orange-300 transition-colors">
+                      <div className="flex justify-between items-center gap-2">
+                        <div className="flex items-center gap-2 w-full bg-orange-50 p-1.5 rounded-lg border border-orange-100">
+                          <span className="text-xs text-orange-800 font-bold ml-1">発生年齢</span>
+                          <select value={ev.age} onChange={(e) => updateEvent(ev.id, 'age', e.target.value)} className="border-none bg-white rounded p-1 text-center text-sm font-bold text-orange-600 focus:outline-none shadow-sm flex-1">
+                            {generateOptions(18, 100)}
+                          </select>
+                          <span className="text-xs text-orange-800 mr-1">歳 (本人)</span>
+                        </div>
+                        <button onClick={() => removeEvent(ev.id)} className="text-gray-400 hover:text-red-500 p-2">
+                          <Trash2 size={18} />
+                        </button>
+                      </div>
+                      <div className="flex gap-2 items-center">
+                        <input type="text" value={ev.name} onChange={(e) => updateEvent(ev.id, 'name', e.target.value)} placeholder="イベント名" className="flex-1 border border-gray-300 rounded p-2 text-sm w-full outline-none focus:border-orange-400 focus:ring-1 focus:ring-orange-400" />
+                        <div className="flex items-center w-32 shrink-0 border border-gray-300 rounded p-1 bg-white">
+                          <select value={ev.amount} onChange={(e) => updateEvent(ev.id, 'amount', e.target.value)} className="w-full border-none bg-transparent text-right text-sm font-bold focus:outline-none">
+                            {generateOptions(0, 5000, 10)}
+                          </select>
+                          <span className="text-[10px] text-gray-500 ml-1 mr-1">万円</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  {events.length === 0 && (
+                    <p className="text-sm text-gray-400 text-center py-6 bg-gray-50 rounded-xl border border-dashed border-gray-300">イベントがありません。「追加」ボタンから登録してください。</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="h-8"></div>
+            </aside>
+
+            {/* --- Right Panel: Results --- */}
+            <section className="w-full lg:w-2/3 bg-white flex flex-col relative order-1 lg:order-2">
+
+              <div className="bg-gradient-to-br from-gray-800 to-gray-900 text-white p-4 lg:p-6 shadow-md z-10 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                <div className="w-full sm:w-auto">
                   <h3 className="text-gray-400 text-xs lg:text-sm font-semibold tracking-wider mb-1">最終資産残高 ({simBasic.endAge}歳時点)</h3>
                   <div key={`summary-${simKey}`} className={`text-3xl lg:text-4xl font-bold flex items-baseline gap-1 lg:gap-2 anim-slide-up ${chartData[chartData.length-1].savings < 0 ? 'text-red-400' : 'text-green-400'}`}>
                     {chartData[chartData.length-1].savings.toLocaleString()} <span className="text-sm lg:text-lg font-normal text-gray-300">万円</span>
                   </div>
                 </div>
                 
-                <div className="flex gap-4 lg:gap-6">
-                  <div className="text-right">
+                <div className="flex w-full sm:w-auto justify-between sm:justify-end items-center gap-4 lg:gap-6 border-t sm:border-t-0 border-gray-700 pt-3 sm:pt-0 mt-1 sm:mt-0">
+                  <div className="text-left sm:text-right">
                      <h3 className="text-gray-400 text-[10px] lg:text-xs font-semibold mb-1">最大資産額</h3>
                      <p key={`max-${simKey}`} className="text-lg lg:text-xl font-bold anim-slide-up">{maxSavings.toLocaleString()} <span className="text-[10px] lg:text-xs font-normal">万円</span></p>
                   </div>
                   {simulationData.bankruptAge && (
-                    <div key={`alert-${simKey}`} className="bg-red-500/20 border border-red-500/50 rounded-lg p-2 lg:p-3 flex items-center gap-2 lg:gap-3 anim-pop">
-                      <AlertTriangle className="text-red-400" size={20} />
-                      <div className="hidden sm:block">
-                        <h3 className="text-red-200 text-[10px] lg:text-xs font-bold">資産枯渇アラート</h3>
-                        <p className="text-white font-bold text-sm">{simulationData.bankruptAge} 歳</p>
+                    <div key={`alert-${simKey}`} className="bg-red-500/20 border border-red-500/50 rounded-lg p-2 lg:p-3 flex items-center gap-2 lg:gap-3 anim-pop shrink-0">
+                      <AlertTriangle className="text-red-400 w-5 h-5 lg:w-6 lg:h-6" />
+                      <div>
+                        <h3 className="text-red-200 text-[10px] lg:text-xs font-bold leading-tight">資産枯渇</h3>
+                        <p className="text-white font-bold text-xs lg:text-sm">{simulationData.bankruptAge} 歳</p>
                       </div>
-                      <div className="sm:hidden text-white font-bold text-sm">{simulationData.bankruptAge}歳で枯渇</div>
                     </div>
                   )}
                 </div>
               </div>
 
-              <div className="flex border-b border-gray-200 bg-gray-50 px-2 lg:px-6 pt-2 shrink-0">
+              <div className="flex border-b border-gray-200 bg-gray-50 px-2 lg:px-6 pt-2 overflow-x-auto scrollbar-hide">
                 <button 
                   onClick={() => setActiveTab('chart')}
-                  className={`px-4 lg:px-6 py-2 lg:py-3 font-semibold text-xs lg:text-sm rounded-t-lg flex items-center gap-2 transition-colors ${activeTab === 'chart' ? 'bg-white text-blue-600 border-t border-l border-r border-gray-200' : 'text-gray-500 hover:bg-gray-100'}`}
+                  className={`px-4 lg:px-6 py-3 font-semibold text-xs lg:text-sm rounded-t-lg flex items-center gap-2 transition-colors whitespace-nowrap ${activeTab === 'chart' ? 'bg-white text-blue-600 border-t border-l border-r border-gray-200 shadow-sm' : 'text-gray-500 hover:bg-gray-100'}`}
                 >
-                  <TrendingUp size={16} /> グラフ
+                  <TrendingUp size={16} /> 資産推移グラフ
                 </button>
                 <button 
                   onClick={() => setActiveTab('table')}
-                  className={`px-4 lg:px-6 py-2 lg:py-3 font-semibold text-xs lg:text-sm rounded-t-lg flex items-center gap-2 transition-colors ${activeTab === 'table' ? 'bg-white text-blue-600 border-t border-l border-r border-gray-200' : 'text-gray-500 hover:bg-gray-100'}`}
+                  className={`px-4 lg:px-6 py-3 font-semibold text-xs lg:text-sm rounded-t-lg flex items-center gap-2 transition-colors whitespace-nowrap ${activeTab === 'table' ? 'bg-white text-blue-600 border-t border-l border-r border-gray-200 shadow-sm' : 'text-gray-500 hover:bg-gray-100'}`}
                 >
                   <TableIcon size={16} /> キャッシュフロー表
                 </button>
               </div>
 
-              <div className="flex-auto overflow-y-auto overflow-x-hidden p-2 lg:p-6 bg-white flex flex-col relative min-h-[350px] lg:min-h-0" key={simKey}>
+              <div className="flex-1 overflow-auto p-2 lg:p-6 bg-white relative" key={simKey} ref={chartContainerRef}>
+                
                 {activeTab === 'chart' && (
-                  <div className="h-full flex flex-col anim-slide-up w-full">
-                    <h3 className="text-center font-bold text-gray-700 mb-2 text-sm lg:text-base">金融資産推移シミュレーション</h3>
+                  <div className="h-full flex flex-col anim-slide-up w-full overflow-x-auto overflow-y-hidden">
+                    <h3 className="text-center font-bold text-gray-700 mb-2 text-sm lg:text-base hidden lg:block">金融資産推移シミュレーション</h3>
                     
-                    <div className="mb-2 lg:mb-4 flex justify-center gap-2 lg:gap-4 text-[10px] lg:text-sm text-gray-600 anim-fade flex-wrap" style={{ animationDelay: '1s' }}>
+                    <div className="mb-2 flex justify-center gap-2 lg:gap-4 text-[10px] lg:text-xs text-gray-600 anim-fade flex-wrap" style={{ animationDelay: '1s' }}>
                       <span className="flex items-center gap-1"><div className="w-3 lg:w-4 h-1 bg-blue-500"></div> 資産残高</span>
                       <span className="flex items-center gap-1"><div className="w-2 lg:w-3 h-2 lg:h-3 bg-[#34d399] opacity-60"></div> 収入</span>
                       <span className="flex items-center gap-1"><div className="w-2 lg:w-3 h-2 lg:h-3 bg-[#f87171] opacity-60"></div> 支出</span>
                       <span className="flex items-center gap-1"><div className="w-2 lg:w-3 h-2 lg:h-3 rounded-full bg-orange-500"></div> イベント</span>
+                      <span className="flex items-center gap-1"><div className="w-3 lg:w-4 h-1 bg-red-500"></div> 枯渇ライン</span>
                     </div>
                     
                     <div 
-                      className="flex-1 relative w-full flex items-start justify-center min-h-[250px]"
+                      className="flex-1 relative min-h-[300px] lg:min-h-[400px] flex items-start justify-center min-w-[600px] lg:min-w-0 pb-10"
                       onMouseLeave={handleMouseLeave}
                     >
-                      <svg width="100%" height="100%" viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="overflow-visible max-h-full">
+                      <svg width="100%" viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="overflow-visible max-h-full">
                         <g className="anim-fade">
-                          <text x={padding.left - 10} y={padding.top - 15} textAnchor="end" fontSize="10" fill="#6b7280" fontWeight="bold">(資産:万円)</text>
-                          <text x={chartWidth - padding.right + 10} y={padding.top - 15} textAnchor="start" fontSize="10" fill="#9ca3af" fontWeight="bold">(収支:万円)</text>
+                          <text x={padding.left - 5} y={padding.top - 15} textAnchor="end" fontSize="10" fill="#6b7280" fontWeight="bold">
+                            (資産:万円)
+                          </text>
+                          <text x={chartWidth - padding.right + 5} y={padding.top - 15} textAnchor="start" fontSize="10" fill="#9ca3af" fontWeight="bold">
+                            (収支:万円)
+                          </text>
                           {yTicks.map((tick, i) => (
                             <g key={`y-${i}`}>
-                              <line x1={padding.left} y1={getY(tick)} x2={chartWidth - padding.right} y2={getY(tick)} stroke={tick === 0 ? "#ef4444" : "#e5e7eb"} strokeWidth={tick === 0 ? 2 : 1} strokeDasharray={tick === 0 ? "none" : "4 4"} />
-                              <text x={padding.left - 10} y={getY(tick)} textAnchor="end" dominantBaseline="middle" fontSize="12" fill="#6b7280">{tick.toLocaleString()}</text>
+                              <line 
+                                x1={padding.left} y1={getY(tick)} 
+                                x2={chartWidth - padding.right} y2={getY(tick)} 
+                                stroke={tick === 0 ? "#ef4444" : "#e5e7eb"} 
+                                strokeWidth={tick === 0 ? 2 : 1}
+                                strokeDasharray={tick === 0 ? "none" : "4 4"}
+                              />
+                              <text x={padding.left - 5} y={getY(tick)} textAnchor="end" dominantBaseline="middle" fontSize="10" fill="#6b7280">
+                                {tick.toLocaleString()}
+                              </text>
                             </g>
                           ))}
                           <line x1={padding.left} y1={chartHeight - padding.bottom} x2={chartWidth - padding.right} y2={chartHeight - padding.bottom} stroke="#9ca3af" strokeWidth="2" />
                           {xTicks.map((tick, i) => (
                             <g key={`x-${i}`}>
                               <line x1={getX(tick)} y1={chartHeight - padding.bottom} x2={getX(tick)} y2={chartHeight - padding.bottom + 5} stroke="#9ca3af" />
-                              <text x={getX(tick)} y={chartHeight - padding.bottom + 20} textAnchor="middle" fontSize="12" fill="#6b7280">{tick}歳</text>
+                              <text x={getX(tick)} y={chartHeight - padding.bottom + 15} textAnchor="middle" fontSize="10" fill="#6b7280">
+                                {tick}歳
+                              </text>
                             </g>
                           ))}
+
                           {flowTicks.map((tick, i) => (
                             <g key={`fy-${i}`}>
-                              <line x1={chartWidth - padding.right} y1={getYFlow(tick)} x2={chartWidth - padding.right + 5} y2={getYFlow(tick)} stroke="#d1d5db" />
-                              <text x={chartWidth - padding.right + 8} y={getYFlow(tick)} textAnchor="start" dominantBaseline="middle" fontSize="10" fill="#9ca3af">{tick.toLocaleString()}</text>
+                              <line 
+                                x1={chartWidth - padding.right} y1={getYFlow(tick)} 
+                                x2={chartWidth - padding.right + 5} y2={getYFlow(tick)} 
+                                stroke="#d1d5db" 
+                              />
+                              <text x={chartWidth - padding.right + 8} y={getYFlow(tick)} textAnchor="start" dominantBaseline="middle" fontSize="9" fill="#9ca3af">
+                                {tick.toLocaleString()}
+                              </text>
                             </g>
                           ))}
                         </g>
 
                         {minSavings < 0 && (
-                          <rect x={padding.left} y={zeroY} width={innerWidth} height={chartHeight - padding.bottom - zeroY} fill="#fee2e2" opacity="0.3" className="anim-fade" style={{ animationDelay: '0.5s' }} />
+                          <rect 
+                            x={padding.left} 
+                            y={zeroY} 
+                            width={innerWidth} 
+                            height={chartHeight - padding.bottom - zeroY} 
+                            fill="#fee2e2" 
+                            opacity="0.3"
+                            className="anim-fade"
+                            style={{ animationDelay: '0.5s' }}
+                          />
                         )}
 
                         <g className="anim-fade" style={{ animationDelay: '0.3s' }}>
@@ -675,11 +1180,19 @@
                           })}
                         </g>
 
-                        <path d={savingsPath} fill="none" stroke="#3b82f6" strokeWidth="3" className="drop-shadow-md anim-path" />
+                        <path d={savingsPath} fill="none" stroke="#3b82f6" strokeWidth={window.innerWidth < 768 ? "2" : "3"} className="drop-shadow-md anim-path" />
                         
                         {chartData.map((d, i) => (
-                          i % 2 === 0 && ( 
-                            <circle key={`dot-${i}`} cx={getX(d.age)} cy={getY(d.savings)} r="3" fill={d.savings < 0 ? "#ef4444" : "#2563eb"} className="anim-pop" style={{ animationDelay: `${(i / chartData.length) * 1.0}s` }} />
+                          i % (window.innerWidth < 768 ? 5 : 2) === 0 && ( 
+                            <circle 
+                              key={`dot-${i}`} 
+                              cx={getX(d.age)} 
+                              cy={getY(d.savings)} 
+                              r={window.innerWidth < 768 ? "2" : "3"} 
+                              fill={d.savings < 0 ? "#ef4444" : "#2563eb"} 
+                              className="anim-pop"
+                              style={{ animationDelay: `${(i / chartData.length) * 1.0}s` }}
+                            />
                           )
                         ))}
                         
@@ -691,20 +1204,35 @@
                             const y = getY(d.savings);
                             const eventArray = d.events.split('、');
 
-                            activeLevels = activeLevels.filter(item => x - item.x < 60);
+                            activeLevels = activeLevels.filter(item => x - item.x < (window.innerWidth < 768 ? 30 : 60));
                             const usedLevels = activeLevels.map(item => item.level);
+                            
                             let currentLevel = 0;
-                            while (usedLevels.includes(currentLevel)) currentLevel++;
+                            while (usedLevels.includes(currentLevel)) {
+                              currentLevel++;
+                            }
                             activeLevels.push({ x, level: currentLevel });
 
-                            const baseY = y - 15 - (currentLevel * 25);
+                            const baseY = y - 10 - (currentLevel * (window.innerWidth < 768 ? 20 : 25));
 
                             return (
                               <g key={`ev-${i}`} className="anim-pop" style={{ animationDelay: `${(i / chartData.length) * 1.0}s` }}>
-                                {currentLevel > 0 && <line x1={x} y1={y - 5} x2={x} y2={baseY + 5} stroke="#fdba74" strokeWidth="1" strokeDasharray="2 2" />}
-                                <circle cx={x} cy={y} r="5" fill="#f97316" stroke="#fff" strokeWidth="2" />
+                                {currentLevel > 0 && (
+                                  <line x1={x} y1={y - 5} x2={x} y2={baseY + 5} stroke="#fdba74" strokeWidth="1" strokeDasharray="2 2" />
+                                )}
+                                <circle cx={x} cy={y} r={window.innerWidth < 768 ? "3" : "5"} fill="#f97316" stroke="#fff" strokeWidth="2" />
+                                
                                 {eventArray.map((evName, idx) => (
-                                  <text key={idx} x={x} y={baseY - ((eventArray.length - 1 - idx) * 12)} textAnchor="middle" fontSize="10" fill="#c2410c" fontWeight="bold" style={{ textShadow: "1px 1px 0px rgba(255,255,255,0.9), -1px -1px 0px rgba(255,255,255,0.9), 1px -1px 0px rgba(255,255,255,0.9), -1px 1px 0px rgba(255,255,255,0.9), 0px 1px 0px rgba(255,255,255,0.9), 0px -1px 0px rgba(255,255,255,0.9)" }}>
+                                  <text 
+                                    key={idx} 
+                                    x={x} 
+                                    y={baseY - ((eventArray.length - 1 - idx) * 12)} 
+                                    textAnchor="middle" 
+                                    fontSize={window.innerWidth < 768 ? "8" : "10"} 
+                                    fill="#c2410c" 
+                                    fontWeight="bold"
+                                    style={{ textShadow: "1px 1px 0px rgba(255,255,255,0.9), -1px -1px 0px rgba(255,255,255,0.9), 1px -1px 0px rgba(255,255,255,0.9), -1px 1px 0px rgba(255,255,255,0.9), 0px 1px 0px rgba(255,255,255,0.9), 0px -1px 0px rgba(255,255,255,0.9)" }}
+                                  >
                                     {evName}
                                   </text>
                                 ))}
@@ -713,6 +1241,7 @@
                           });
                         })()}
 
+                        {/* Hover interaction areas */}
                         {chartData.map((d, i) => {
                           const x = getX(d.age);
                           const prevX = i > 0 ? getX(chartData[i-1].age) : x;
@@ -723,7 +1252,12 @@
 
                           return (
                             <rect
-                              key={`hover-${i}`} x={xStart} y={padding.top} width={Math.max(rectWidth, 0)} height={chartHeight - padding.top - padding.bottom} fill="transparent"
+                              key={`hover-${i}`}
+                              x={xStart}
+                              y={padding.top}
+                              width={Math.max(rectWidth, 0)}
+                              height={chartHeight - padding.top - padding.bottom}
+                              fill="transparent"
                               onMouseMove={(e) => handlePointerMove(e, d)}
                               onTouchMove={(e) => handlePointerMove(e, d)}
                               onTouchStart={(e) => handlePointerMove(e, d)}
@@ -732,51 +1266,103 @@
                           );
                         })}
 
+                        {/* Hover Highlight Indicator */}
                         {tooltip.show && tooltip.data && (
                           <g className="pointer-events-none">
-                            <line x1={getX(tooltip.data.age)} y1={padding.top} x2={getX(tooltip.data.age)} y2={chartHeight - padding.bottom} stroke="#9ca3af" strokeWidth="1" strokeDasharray="4 4" />
-                            <circle cx={getX(tooltip.data.age)} cy={getY(tooltip.data.savings)} r="5" fill="#fff" stroke={tooltip.data.savings < 0 ? "#ef4444" : "#2563eb"} strokeWidth="3" />
+                            <line
+                              x1={getX(tooltip.data.age)} y1={padding.top}
+                              x2={getX(tooltip.data.age)} y2={chartHeight - padding.bottom}
+                              stroke="#9ca3af" strokeWidth="1" strokeDasharray="4 4"
+                            />
+                            <circle
+                              cx={getX(tooltip.data.age)}
+                              cy={getY(tooltip.data.savings)}
+                              r="5"
+                              fill="#fff"
+                              stroke={tooltip.data.savings < 0 ? "#ef4444" : "#2563eb"}
+                              strokeWidth="3"
+                            />
                           </g>
                         )}
                       </svg>
+
+                      {/* Tooltip Overlay (absolute positioning inside the container) */}
+                      {tooltip.show && tooltip.data && (
+                        <div 
+                          className="absolute z-50 bg-white/95 backdrop-blur-md border border-blue-200 shadow-2xl rounded-xl p-3 text-[10px] lg:text-sm pointer-events-none transform -translate-x-1/2 -translate-y-full transition-all duration-100 ease-out"
+                          style={{ left: tooltip.x, top: tooltip.y - 20 }}
+                        >
+                          <div className="font-bold text-gray-800 border-b border-gray-200 pb-1 mb-2 text-center text-xs lg:text-base">
+                            {tooltip.data.age}歳時点 <span className="text-gray-400 font-normal text-[10px] ml-1">の予測</span>
+                          </div>
+                          <div className="grid grid-cols-2 gap-x-3 lg:gap-x-5 gap-y-1.5 w-40 lg:w-48">
+                            <span className="text-gray-500 font-medium">収入:</span>
+                            <span className="text-right font-bold text-emerald-600">
+                              {tooltip.data.totalIncome.toLocaleString()} <span className="font-normal text-[8px] lg:text-[10px] text-emerald-400">万円</span>
+                            </span>
+                            <span className="text-gray-500 font-medium">支出:</span>
+                            <span className="text-right font-bold text-red-500">
+                              {tooltip.data.totalExpense.toLocaleString()} <span className="font-normal text-[8px] lg:text-[10px] text-red-400">万円</span>
+                            </span>
+                            <span className="text-gray-600 font-bold border-t border-gray-100 pt-1 mt-0.5">年間収支:</span>
+                            <span className={`text-right font-bold border-t border-gray-100 pt-1 mt-0.5 ${(tooltip.data.totalIncome - tooltip.data.totalExpense) < 0 ? 'text-red-600' : 'text-blue-600'}`}>
+                              {(tooltip.data.totalIncome - tooltip.data.totalExpense) > 0 ? '+' : ''}{(tooltip.data.totalIncome - tooltip.data.totalExpense).toLocaleString()} <span className="font-normal text-[8px] lg:text-[10px]">万円</span>
+                            </span>
+                            <div className="col-span-2 border-t-2 border-gray-200 my-1"></div>
+                            <span className="text-gray-800 font-bold">資産残高:</span>
+                            <span className={`text-right font-black text-sm lg:text-base ${tooltip.data.savings < 0 ? 'text-red-600' : 'text-blue-700'}`}>
+                              {tooltip.data.savings.toLocaleString()} <span className="font-normal text-[8px] lg:text-[10px]">万円</span>
+                            </span>
+                            <span className="col-span-2 text-right text-[8px] lg:text-[10px] text-gray-500 bg-gray-50 rounded p-1 -mt-1 leading-tight">
+                              現金 {tooltip.data.cash.toLocaleString()}万<br/>投資 {tooltip.data.investment.toLocaleString()}万
+                            </span>
+                          </div>
+                          {tooltip.data.events && (
+                            <div className="mt-2 pt-2 border-t border-orange-100 text-[10px] lg:text-xs text-orange-700 font-bold leading-snug bg-orange-50/50 p-1.5 rounded">
+                              <span className="inline-block w-2 h-2 rounded-full bg-orange-500 mr-1.5 shadow-sm"></span>
+                              {tooltip.data.events}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
 
                 {activeTab === 'table' && (
-                  <div className="overflow-x-auto h-full rounded-lg border border-gray-200 anim-slide-up w-full">
-                    <table className="w-full text-xs lg:text-sm text-right border-collapse min-w-[600px]">
+                  <div className="overflow-x-auto h-full rounded-lg border border-gray-200 anim-slide-up">
+                    <table className="w-full text-[10px] lg:text-sm text-right border-collapse min-w-[600px]">
                       <thead className="bg-gray-100 text-gray-700 sticky top-0 shadow-sm z-10">
                         <tr>
-                          <th className="p-2 lg:p-3 text-center border-b border-gray-300 w-12 lg:w-16">年齢</th>
-                          <th className="p-2 lg:p-3 border-b border-gray-300">手取り収入<br/><span className="text-[8px] lg:text-[10px] font-normal text-gray-500">(本人+配偶者+年金等)</span></th>
+                          <th className="p-2 lg:p-3 text-center border-b border-gray-300 w-10 lg:w-16">年齢</th>
+                          <th className="p-2 lg:p-3 border-b border-gray-300">手取り収入<br/><span className="text-[8px] lg:text-[10px] font-normal text-gray-500">(本人+配偶者+年金)</span></th>
                           <th className="p-2 lg:p-3 border-b border-gray-300 text-red-700">基本生活費<br/><span className="text-[8px] lg:text-[10px] font-normal text-gray-500">(インフレ加味)</span></th>
                           <th className="p-2 lg:p-3 border-b border-gray-300 text-red-700">住居費<br/><span className="text-[8px] lg:text-[10px] font-normal text-gray-500">(ローン+管理費)</span></th>
                           <th className="p-2 lg:p-3 border-b border-gray-300 text-red-700">教育費<br/><span className="text-[8px] lg:text-[10px] font-normal text-gray-500">(インフレ加味)</span></th>
                           <th className="p-2 lg:p-3 border-b border-gray-300 text-red-700">イベント支出</th>
                           <th className="p-2 lg:p-3 border-b border-gray-300 font-bold bg-blue-50">年間収支</th>
-                          <th className="p-2 lg:p-3 border-b border-gray-300 font-bold bg-blue-100 text-sm lg:text-lg">資産残高</th>
-                          <th className="p-2 lg:p-3 text-left border-b border-gray-300 w-24">ライフイベント</th>
+                          <th className="p-2 lg:p-3 border-b border-gray-300 font-bold bg-blue-100 text-xs lg:text-lg">資産残高</th>
+                          <th className="p-2 lg:p-3 text-left border-b border-gray-300 w-32">ライフイベント</th>
                         </tr>
                       </thead>
                       <tbody>
                         {chartData.map((d) => (
                           <tr key={`tr-${d.age}`} className={`border-b border-gray-100 hover:bg-blue-50/50 transition-colors ${d.age === simBasic.selfRetirementAge ? 'bg-yellow-50' : ''}`}>
-                            <td className="p-2 lg:p-3 text-center font-semibold bg-gray-50">{d.age}</td>
-                            <td className="p-2 lg:p-3 text-green-700">{d.totalIncome.toLocaleString()}</td>
-                            <td className="p-2 lg:p-3 text-red-600">-{d.baseExpense.toLocaleString()}</td>
-                            <td className="p-2 lg:p-3 text-red-600">{d.housingExpense > 0 ? `-${d.housingExpense.toLocaleString()}` : '0'}</td>
-                            <td className="p-2 lg:p-3 text-red-600">{d.educationExpense > 0 ? `-${d.educationExpense.toLocaleString()}` : '0'}</td>
-                            <td className="p-2 lg:p-3 text-red-600">{d.eventExpense > 0 ? `-${d.eventExpense.toLocaleString()}` : '0'}</td>
-                            <td className={`p-2 lg:p-3 font-bold bg-blue-50/30 ${d.totalIncome - d.totalExpense < 0 ? 'text-red-500' : 'text-blue-600'}`}>
+                            <td className="p-2 lg:p-3 text-center font-bold bg-gray-50">{d.age}</td>
+                            <td className="p-2 lg:p-3 text-emerald-600 font-medium">{d.totalIncome.toLocaleString()}</td>
+                            <td className="p-2 lg:p-3 text-red-500">-{d.baseExpense.toLocaleString()}</td>
+                            <td className="p-2 lg:p-3 text-red-500">{d.housingExpense > 0 ? `-${d.housingExpense.toLocaleString()}` : '0'}</td>
+                            <td className="p-2 lg:p-3 text-red-500">{d.educationExpense > 0 ? `-${d.educationExpense.toLocaleString()}` : '0'}</td>
+                            <td className="p-2 lg:p-3 text-red-500">{d.eventExpense > 0 ? `-${d.eventExpense.toLocaleString()}` : '0'}</td>
+                            <td className={`p-2 lg:p-3 font-bold bg-blue-50/30 ${(d.totalIncome - d.totalExpense) < 0 ? 'text-red-500' : 'text-blue-600'}`}>
                               {(d.totalIncome - d.totalExpense) > 0 ? '+' : ''}{(d.totalIncome - d.totalExpense).toLocaleString()}
                             </td>
-                            <td className={`p-2 lg:p-3 font-bold bg-blue-50/60 text-sm lg:text-base ${d.savings < 0 ? 'text-red-600 bg-red-50' : 'text-blue-800'}`}>
+                            <td className={`p-2 lg:p-3 font-black bg-blue-50/60 text-xs lg:text-base ${d.savings < 0 ? 'text-red-600 bg-red-50' : 'text-blue-800'}`}>
                               {d.savings.toLocaleString()}
                             </td>
-                            <td className="p-2 lg:p-3 text-left text-orange-600 font-medium text-[10px] lg:text-xs">
+                            <td className="p-2 lg:p-3 text-left text-orange-600 font-bold text-[8px] lg:text-xs leading-tight">
                               {d.events}
-                              {d.age === simBasic.selfRetirementAge && <span className="text-gray-500 ml-1">本人退職</span>}
+                              {d.age === simBasic.selfRetirementAge && <span className="text-gray-500 ml-1 block mt-0.5">本人退職</span>}
                             </td>
                           </tr>
                         ))}
@@ -786,292 +1372,7 @@
                 )}
                 
               </div>
-              
-              {tooltip.show && tooltip.data && (
-                <div 
-                  className="fixed z-50 bg-white/95 backdrop-blur-sm border border-gray-200 shadow-xl rounded-lg p-2 lg:p-3 text-xs lg:text-sm pointer-events-none transform -translate-x-1/2 -translate-y-full transition-opacity duration-150"
-                  style={{ left: tooltip.x, top: tooltip.y - 15 }}
-                >
-                  <div className="font-bold text-gray-700 border-b border-gray-100 pb-1 mb-1 lg:mb-2 text-center">{tooltip.data.age}歳時点</div>
-                  <div className="grid grid-cols-2 gap-x-3 lg:gap-x-4 gap-y-1">
-                    <span className="text-gray-500">収入:</span>
-                    <span className="text-right font-bold text-emerald-500">{tooltip.data.totalIncome.toLocaleString()} <span className="font-normal text-[10px] text-gray-400">万円</span></span>
-                    <span className="text-gray-500">支出:</span>
-                    <span className="text-right font-bold text-red-400">{tooltip.data.totalExpense.toLocaleString()} <span className="font-normal text-[10px] text-gray-400">万円</span></span>
-                    <span className="text-gray-500">年間収支:</span>
-                    <span className={`text-right font-bold ${(tooltip.data.totalIncome - tooltip.data.totalExpense) < 0 ? 'text-red-500' : 'text-blue-600'}`}>{(tooltip.data.totalIncome - tooltip.data.totalExpense) > 0 ? '+' : ''}{(tooltip.data.totalIncome - tooltip.data.totalExpense).toLocaleString()} <span className="font-normal text-[10px] text-gray-400">万円</span></span>
-                    <div className="col-span-2 border-t border-gray-100 my-1"></div>
-                    <span className="text-gray-500">資産残高:</span>
-                    <span className={`text-right font-bold ${tooltip.data.savings < 0 ? 'text-red-600' : 'text-blue-600'}`}>{tooltip.data.savings.toLocaleString()} <span className="font-normal text-[10px] text-gray-400">万円</span></span>
-                    <span className="col-span-2 text-right text-[9px] lg:text-[10px] text-gray-400 -mt-1">(現金: {tooltip.data.cash.toLocaleString()} / 投資: {tooltip.data.investment.toLocaleString()})</span>
-                  </div>
-                  {tooltip.data.events && (
-                    <div className="mt-2 pt-1 lg:pt-2 border-t border-gray-100 text-[10px] lg:text-xs text-orange-600 font-medium">
-                      <span className="inline-block w-2 h-2 rounded-full bg-orange-400 mr-1"></span>{tooltip.data.events}
-                    </div>
-                  )}
-                </div>
-              )}
             </section>
-
-            {/* 入力セクション：スマホ時は下（order-2）、PC時は左（order-1）に配置 */}
-            <aside className="w-full lg:w-1/3 bg-white overflow-y-visible lg:overflow-y-auto p-4 lg:p-6 shadow-inner order-2 lg:order-1 pb-20">
-              <div className="mb-6 lg:mb-8 space-y-3 sticky top-0 bg-white/95 backdrop-blur z-20 pb-3 pt-1 border-b border-gray-100 lg:static lg:bg-transparent lg:border-none lg:pb-0 lg:pt-0">
-                <button onClick={runSimulation} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg shadow-md flex justify-center items-center gap-2 transition-all active:scale-95 group">
-                  <Play size={20} className="group-hover:scale-110 transition-transform" /> シミュレーション実行
-                </button>
-                <div className="flex gap-2">
-                  <button onClick={exportSettings} className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold py-2 px-1 rounded border border-gray-300 flex justify-center items-center gap-1 transition-colors"><Download size={14} /> 保存</button>
-                  <label className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold py-2 px-1 rounded border border-gray-300 flex justify-center items-center gap-1 transition-colors cursor-pointer"><Upload size={14} /> 読込<input type="file" accept=".json" className="hidden" onChange={importSettings} /></label>
-                  <button onClick={resetSettings} className="flex-1 bg-gray-100 hover:bg-gray-200 text-red-600 text-xs font-semibold py-2 px-1 rounded border border-gray-300 flex justify-center items-center gap-1 transition-colors"><Trash2 size={14} /> リセット</button>
-                </div>
-              </div>
-
-              <div className="mb-8">
-                <h2 className="text-lg font-semibold border-b-2 border-blue-500 pb-2 mb-4 flex items-center gap-2"><User size={20} className="text-blue-600"/> 家族・基本情報</h2>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs text-gray-600 mb-1">本人 現在の年齢</label>
-                    <SelectInput name="selfAge" value={basic.selfAge} onChange={handleBasicChange} options={ageOpts} suffix="歳" />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-gray-600 mb-1">本人 退職予定年齢</label>
-                    <SelectInput name="selfRetirementAge" value={basic.selfRetirementAge} onChange={handleBasicChange} options={retirementAgeOpts} suffix="歳" />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-gray-600 mb-1">配偶者 現在の年齢</label>
-                    <SelectInput name="spouseAge" value={basic.spouseAge} onChange={handleBasicChange} options={ageOpts} suffix="歳" />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-gray-600 mb-1">配偶者 退職予定年齢</label>
-                    <SelectInput name="spouseRetirementAge" value={basic.spouseRetirementAge} onChange={handleBasicChange} options={retirementAgeOpts} suffix="歳" />
-                  </div>
-                  
-                  <div className="col-span-2 mt-2 grid grid-cols-2 gap-4 border-t border-gray-100 pt-3">
-                    <div>
-                      <label className="block text-xs text-gray-600 mb-1">現在の金融資産 (現金)</label>
-                      <SelectInput name="initialCash" value={basic.initialCash} onChange={handleBasicChange} options={moneyLargeOpts} suffix="万円" className="font-bold text-blue-700" />
-                    </div>
-                    <div>
-                      <label className="block text-xs text-gray-600 mb-1">現在の金融資産 (投資商品)</label>
-                      <SelectInput name="initialInvestment" value={basic.initialInvestment} onChange={handleBasicChange} options={moneyLargeOpts} suffix="万円" className="font-bold text-green-700" />
-                    </div>
-                  </div>
-                  
-                  <div className="col-span-2 grid grid-cols-3 gap-2 lg:gap-3 mt-1">
-                    <div>
-                      <label className="block text-[10px] text-gray-600 mb-1 font-bold text-green-600">毎月の投資積立額</label>
-                      <SelectInput name="monthlyInvestment" value={basic.monthlyInvestment} onChange={handleBasicChange} options={moneySmallOpts} suffix="万円" className="bg-green-50 border-green-300 text-xs" />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] text-gray-600 mb-1">期待リターン(年率)</label>
-                      <SelectInput name="investmentReturnRate" value={basic.investmentReturnRate} onChange={handleBasicChange} options={rateOpts} suffix="%" className="text-xs" />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] text-gray-600 mb-1">予想インフレ率(年率)</label>
-                      <SelectInput name="inflationRate" value={basic.inflationRate} onChange={handleBasicChange} options={rateOpts} suffix="%" className="text-xs" />
-                    </div>
-                    <div className="col-span-3"><p className="text-[10px] text-gray-500 text-right">※積立額は自動的に現金から投資へ移動され、期待リターンが適用されます</p></div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="mb-8 bg-blue-50 p-3 lg:p-4 rounded-lg border border-blue-100">
-                <h2 className="text-lg font-semibold text-blue-800 mb-2 flex items-center gap-2"><TrendingUp size={20} /> 収入・年金設定</h2>
-                <p className="text-[10px] text-gray-600 mb-3 bg-white p-2 rounded border border-blue-200">※年収は<span className="font-bold text-red-500">額面金額</span>を入力してください。手取り額に自動計算されます。</p>
-                <div className="space-y-4">
-                  <div className="bg-white p-3 rounded border border-blue-200">
-                    <h3 className="text-sm font-bold text-blue-700 mb-2 border-b border-blue-100 pb-1">本人</h3>
-                    <div className="grid grid-cols-2 gap-2 mb-3">
-                      <div>
-                        <label className="block text-[10px] text-gray-500">額面年収(〜60歳)</label>
-                        <SelectInput name="selfGrossBefore60" value={income.selfGrossBefore60} onChange={handleIncomeChange} options={moneyMediumOpts} suffix="万円" className="text-sm" />
-                        <p className="text-[9px] text-blue-600 mt-0.5 text-right font-medium">手取り約: {Math.round(calcNetIncome(income.selfGrossBefore60))}万円</p>
-                      </div>
-                      <div>
-                        <label className="block text-[10px] text-gray-500">上昇率</label>
-                        <SelectInput name="selfGrowthRateBefore60" value={income.selfGrowthRateBefore60} onChange={handleIncomeChange} options={rateOpts} suffix="%" className="text-sm" />
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2 mb-3">
-                      <div>
-                        <label className="block text-[10px] text-gray-500">額面年収(60歳〜退職)</label>
-                        <SelectInput name="selfGrossAfter60" value={income.selfGrossAfter60} onChange={handleIncomeChange} options={moneyMediumOpts} suffix="万円" className="text-sm" />
-                        <p className="text-[9px] text-blue-600 mt-0.5 text-right font-medium">手取り約: {Math.round(calcNetIncome(income.selfGrossAfter60))}万円</p>
-                      </div>
-                      <div>
-                        <label className="block text-[10px] text-gray-500">上昇率</label>
-                        <SelectInput name="selfGrowthRateAfter60" value={income.selfGrowthRateAfter60} onChange={handleIncomeChange} options={rateOpts} suffix="%" className="text-sm" />
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-3 gap-2">
-                      <div>
-                        <label className="block text-[10px] text-gray-500">退職金</label>
-                        <SelectInput name="severanceSelf" value={income.severanceSelf} onChange={handleIncomeChange} options={moneyLargeOpts} suffix="万円" className="text-[10px] lg:text-xs" />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] text-gray-500">年金開始年齢</label>
-                        <SelectInput name="pensionStartSelf" value={income.pensionStartSelf} onChange={handleIncomeChange} options={retirementAgeOpts} suffix="歳" className="text-[10px] lg:text-xs" />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] text-gray-500">年金(年額)</label>
-                        <SelectInput name="pensionSelf" value={income.pensionSelf} onChange={handleIncomeChange} options={pensionOpts} suffix="万円" className="text-[10px] lg:text-xs" />
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="bg-white p-3 rounded border border-blue-200">
-                    <h3 className="text-sm font-bold text-blue-700 mb-2 border-b border-blue-100 pb-1">配偶者</h3>
-                    <div className="grid grid-cols-2 gap-2 mb-3">
-                      <div>
-                        <label className="block text-[10px] text-gray-500">額面年収(〜60歳)</label>
-                        <SelectInput name="spouseGrossBefore60" value={income.spouseGrossBefore60} onChange={handleIncomeChange} options={moneyMediumOpts} suffix="万円" className="text-sm" />
-                        <p className="text-[9px] text-blue-600 mt-0.5 text-right font-medium">手取り約: {Math.round(calcNetIncome(income.spouseGrossBefore60))}万円</p>
-                      </div>
-                      <div>
-                        <label className="block text-[10px] text-gray-500">上昇率</label>
-                        <SelectInput name="spouseGrowthRateBefore60" value={income.spouseGrowthRateBefore60} onChange={handleIncomeChange} options={rateOpts} suffix="%" className="text-sm" />
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2 mb-3">
-                      <div>
-                        <label className="block text-[10px] text-gray-500">額面年収(60歳〜退職)</label>
-                        <SelectInput name="spouseGrossAfter60" value={income.spouseGrossAfter60} onChange={handleIncomeChange} options={moneyMediumOpts} suffix="万円" className="text-sm" />
-                        <p className="text-[9px] text-blue-600 mt-0.5 text-right font-medium">手取り約: {Math.round(calcNetIncome(income.spouseGrossAfter60))}万円</p>
-                      </div>
-                      <div>
-                        <label className="block text-[10px] text-gray-500">上昇率</label>
-                        <SelectInput name="spouseGrowthRateAfter60" value={income.spouseGrowthRateAfter60} onChange={handleIncomeChange} options={rateOpts} suffix="%" className="text-sm" />
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-3 gap-2">
-                      <div>
-                        <label className="block text-[10px] text-gray-500">退職金</label>
-                        <SelectInput name="severanceSpouse" value={income.severanceSpouse} onChange={handleIncomeChange} options={moneyLargeOpts} suffix="万円" className="text-[10px] lg:text-xs" />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] text-gray-500">年金開始年齢</label>
-                        <SelectInput name="pensionStartSpouse" value={income.pensionStartSpouse} onChange={handleIncomeChange} options={retirementAgeOpts} suffix="歳" className="text-[10px] lg:text-xs" />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] text-gray-500">年金(年額)</label>
-                        <SelectInput name="pensionSpouse" value={income.pensionSpouse} onChange={handleIncomeChange} options={pensionOpts} suffix="万円" className="text-[10px] lg:text-xs" />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="mb-8">
-                <div className="flex items-center justify-between border-b-2 border-green-500 pb-2 mb-4">
-                  <h2 className="text-lg font-semibold flex items-center gap-2"><GraduationCap size={20} className="text-green-600"/> 子ども・教育情報</h2>
-                  <button onClick={addChild} disabled={children.length >= 3} className="text-sm bg-green-100 text-green-700 px-3 py-1 rounded hover:bg-green-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center transition-colors"><Plus size={16} className="mr-1"/> 追加</button>
-                </div>
-                <p className="text-xs text-gray-500 mb-3">※小・中・高の金額は、平均的な塾・習い事の費用を加味しています。</p>
-                <div className="space-y-3">
-                  {children.map((child, index) => (
-                    <div key={child.id} className="bg-white border border-gray-200 p-3 rounded-lg shadow-sm flex flex-col gap-2 relative group">
-                      <div className="flex justify-between items-center mb-1">
-                        <span className="text-sm font-bold text-green-700">第{index + 1}子</span>
-                        <button onClick={() => removeChild(child.id)} className="text-gray-400 hover:text-red-500"><Trash2 size={16} /></button>
-                      </div>
-                      <div className="flex items-center gap-2 mb-1 w-1/2">
-                        <span className="text-xs text-gray-500 w-16">現在の年齢</span>
-                        <SelectInput value={child.age} onChange={(e) => updateChild(child.id, 'age', e.target.value)} options={ageOpts} suffix="歳" className="text-xs" />
-                      </div>
-                      <div className="grid grid-cols-2 gap-2 text-xs">
-                        <div><label className="block text-gray-500 mb-1">小学校</label>
-                          <SimpleSelect value={child.elementary} onChange={(e) => updateChild(child.id, 'elementary', e.target.value)} className="w-full" options={[{value:"public", label:"公立 (約40万/年)"}, {value:"private", label:"私立 (約170万/年)"}]} />
-                        </div>
-                        <div><label className="block text-gray-500 mb-1">中学校</label>
-                          <SimpleSelect value={child.juniorHigh} onChange={(e) => updateChild(child.id, 'juniorHigh', e.target.value)} className="w-full" options={[{value:"public", label:"公立 (約60万/年)"}, {value:"private", label:"私立 (約150万/年)"}]} />
-                        </div>
-                        <div><label className="block text-gray-500 mb-1">高校</label>
-                          <SimpleSelect value={child.highSchool} onChange={(e) => updateChild(child.id, 'highSchool', e.target.value)} className="w-full" options={[{value:"public", label:"公立 (約60万/年)"}, {value:"private", label:"私立 (約110万/年)"}]} />
-                        </div>
-                        <div><label className="block text-gray-500 mb-1">大学・大学院</label>
-                          <SimpleSelect value={child.university} onChange={(e) => updateChild(child.id, 'university', e.target.value)} className="w-full" options={[{value:"public", label:"国公立 (約65万/年)"}, {value:"private_arts", label:"私立文系 (約110万/年)"}, {value:"private_science", label:"私立理系 (約150万/年)"}, {value:"none", label:"進学しない"}]} />
-                        </div>
-                      </div>
-                      <div className="mt-1 flex items-center">
-                        <label className="flex items-center gap-2 text-xs cursor-pointer text-gray-600">
-                          <input type="checkbox" checked={child.livingAlone} onChange={(e) => updateChild(child.id, 'livingAlone', e.target.checked)} className="rounded w-4 h-4" />
-                          大学進学時に一人暮らし（仕送り約120万/年）
-                        </label>
-                      </div>
-                    </div>
-                  ))}
-                  {children.length === 0 && <p className="text-sm text-gray-400 text-center py-4">登録されていません</p>}
-                </div>
-              </div>
-
-              <div className="mb-8">
-                <h2 className="text-lg font-semibold border-b-2 border-red-400 pb-2 mb-4 flex items-center gap-2"><DollarSign size={20} className="text-red-500"/> 支出設定</h2>
-                <div className="bg-white p-3 rounded border border-red-200 mb-4">
-                  <h3 className="text-sm font-bold text-red-700 mb-2 border-b border-red-100 pb-1">基本生活費 <span className="text-xs text-gray-500 font-normal">※教育費・住居費を除く（インフレ対象）</span></h3>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs text-gray-600 mb-1">現役時代（月額）</label>
-                      <SelectInput name="baseMonthly" value={expense.baseMonthly} onChange={handleExpenseChange} options={moneySmallOpts} suffix="万円" className="text-sm" />
-                    </div>
-                    <div>
-                      <label className="block text-xs text-gray-600 mb-1">老後（月額）</label>
-                      <SelectInput name="retirementMonthly" value={expense.retirementMonthly} onChange={handleExpenseChange} options={moneySmallOpts} suffix="万円" className="text-sm" />
-                    </div>
-                  </div>
-                  <div className="mt-3 p-2 bg-red-50 rounded text-[10px] text-gray-600 space-y-1">
-                    <p className="font-semibold text-red-700">【老後の生活費の目安】</p>
-                    <p>・日々の生活や趣味・旅行などを積極的に楽しみたい（生活費約36万円/月）</p>
-                    <p>・基本は節約しつつ、それなりに毎日を楽しみたい（生活費約24万円/月）</p>
-                    <p>・倹約して、収入の範囲で暮らすつもり（生活費約22万円/月）</p>
-                  </div>
-                </div>
-                <div className="bg-white p-3 rounded border border-red-200">
-                  <h3 className="text-sm font-bold text-red-700 mb-2 border-b border-red-100 pb-1 flex items-center gap-1"><Home size={16} /> 住宅関連費</h3>
-                  <div className="grid grid-cols-2 gap-4 mb-3">
-                    <div>
-                      <label className="block text-xs text-gray-600 mb-1">ローン・家賃等（月額）</label>
-                      <SelectInput name="housingLoanMonthly" value={expense.housingLoanMonthly} onChange={handleExpenseChange} options={moneySmallOpts} suffix="万円" className="text-sm" />
-                    </div>
-                    <div>
-                      <label className="block text-xs text-gray-600 mb-1">支払い完了年齢(本人)</label>
-                      <SelectInput name="housingLoanEndAge" value={expense.housingLoanEndAge} onChange={handleExpenseChange} options={ageOpts} suffix="歳" className="text-sm" />
-                    </div>
-                  </div>
-                  <div className="w-full lg:w-1/2 pr-0 lg:pr-2">
-                    <label className="block text-xs text-gray-600 mb-1">管理費・修繕費等（月額）</label>
-                    <SelectInput name="housingMaintenanceMonthly" value={expense.housingMaintenanceMonthly} onChange={handleExpenseChange} options={moneySmallOpts} suffix="万円" className="text-sm" />
-                    <p className="text-[10px] text-gray-500 mt-1 text-right">※インフレ対象</p>
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <div className="flex items-center justify-between border-b-2 border-orange-400 pb-2 mb-4">
-                  <h2 className="text-lg font-semibold flex items-center gap-2"><Calendar size={20} className="text-orange-500"/> ライフイベント</h2>
-                  <button onClick={addEvent} className="text-sm bg-orange-100 text-orange-700 px-3 py-1 rounded hover:bg-orange-200 flex items-center transition-colors"><Plus size={16} className="mr-1"/> 追加</button>
-                </div>
-                <div className="space-y-3">
-                  {events.map((ev) => (
-                    <div key={ev.id} className="bg-white border border-gray-200 p-3 rounded-lg shadow-sm flex flex-col gap-2 relative group hover:border-orange-300 transition-colors">
-                      <div className="flex justify-between items-center gap-2">
-                        <div className="flex items-center gap-2 w-full lg:w-2/3">
-                          <span className="text-[10px] text-gray-500 w-10 text-right">本人年齢</span>
-                          <SelectInput value={ev.age} onChange={(e) => updateEvent(ev.id, 'age', e.target.value)} options={ageOpts} suffix="歳" className="text-xs" />
-                        </div>
-                        <button onClick={() => removeEvent(ev.id)} className="text-gray-400 hover:text-red-500 p-1"><Trash2 size={16} /></button>
-                      </div>
-                      <div className="flex flex-col lg:flex-row gap-2">
-                        <input type="text" value={ev.name} onChange={(e) => updateEvent(ev.id, 'name', e.target.value)} placeholder="イベント名" className="flex-1 border border-gray-300 rounded p-2 text-sm w-full outline-none focus:ring-2 focus:ring-orange-300 text-[16px] lg:text-sm" />
-                        <SelectInput value={ev.amount} onChange={(e) => updateEvent(ev.id, 'amount', e.target.value)} options={eventAmountOpts} suffix="万円" className="w-full lg:w-32 text-sm" />
-                      </div>
-                    </div>
-                  ))}
-                  {events.length === 0 && <p className="text-sm text-gray-400 text-center py-4">イベントがありません</p>}
-                </div>
-              </div>
-            </aside>
-            
           </main>
         </div>
       );
